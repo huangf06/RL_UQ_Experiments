@@ -24,7 +24,7 @@ os.makedirs(args.logdir, exist_ok=True)
 os.makedirs(os.path.dirname(args.save_path), exist_ok=True)
 
 # Configure logging for TensorBoard and stdout
-logger = configure(args.logdir, ["stdout", "tensorboard"])
+logger = configure(args.logdir, ["tensorboard"])
 
 # Create CartPole environment
 env = gym.make("CartPole-v1")
