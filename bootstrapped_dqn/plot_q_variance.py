@@ -1,53 +1,59 @@
-import numpy as np
-import matplotlib.pyplot as plt
 import os
-from stable_baselines3 import DQN
-import gymnasium as gym
 import torch
+import gymnasium as gym
+import argparse
+from stable_baselines3 import DQN
 
-# Ensure the results directory exists
-os.makedirs("results", exist_ok=True)
+# Parse command-line arguments
+parser = argparse.ArgumentParser()
+parser.add_argument("--model_path", type=str, default="models/dqn_cartpole", help="Path to saved model")
+parser.add_argument("--num_episodes", type=int, default=10, help="Number of evaluation episodes")
+parser.add_argument("--device", type=str, default="auto", help="Choose device: auto, cpu, cuda")
+args = parser.parse_args()
+
+# Automatically select device (GPU or CPU)
+if args.device == "auto":
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+else:
+    device = torch.device(args.device)
+
+# Load the trained model (use latest checkpoint if available)
+if not os.path.exists(args.model_path + ".zip"):
+    # Check for latest checkpoint
+    checkpoints = [f for f in os.listdir(os.path.dirname(args.model_path)) if "checkpoint" in f and f.endswith(".zip")]
+    if checkpoints:
+        latest_checkpoint = sorted(checkpoints, key=lambda x: int(x.split("_")[-1].split(".")[0]))[-1]
+        args.model_path = os.path.join(os.path.dirname(args.model_path), latest_checkpoint)
+        print(f"Using latest checkpoint: {args.model_path}")
+    else:
+        raise FileNotFoundError(f"No trained model found at {args.model_path}")
+
+print(f"Loading model from: {args.model_path}")
+model = DQN.load(args.model_path, device=device)
 
 # Create environment
 env = gym.make("CartPole-v1")
 
-# Load trained model
-model = DQN.load("models/dqn_cartpole")
+# Evaluate model
+total_rewards = []
+for episode in range(args.num_episodes):
+    obs, _ = env.reset()
+    done = False
+    episode_reward = 0
 
-# Reset environment and extract observation
-obs = env.reset()[0]  # Ensure correct extraction
+    while not done:
+        action, _ = model.predict(obs, deterministic=True)
+        obs, reward, terminated, truncated, _ = env.step(action)
+        episode_reward += reward
+        done = terminated or truncated
 
-if obs is None:
-    raise ValueError("Error: env.reset() returned None instead of an observation.")
+    total_rewards.append(episode_reward)
+    print(f"Episode {episode+1}: Reward = {episode_reward}")
 
-q_values_list = []
+# Save evaluation results
+results_path = "logs/evaluation_results.txt"
+with open(results_path, "a") as f:
+    f.write(f"Model: {args.model_path}, Episodes: {args.num_episodes}, Avg Reward: {sum(total_rewards)/len(total_rewards):.2f}\n")
 
-# Convert obs to tensor for model input
-obs_tensor = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
-
-# Run the agent and record Q-values
-for _ in range(1000):
-    with torch.no_grad():
-        q_values = model.policy.q_net(obs_tensor)  # Get Q-values from Q-network
-    q_values_list.append(q_values.numpy()[0])  # Convert to NumPy
-
-    action = q_values.argmax().item()  # Choose action with highest Q-value
-    obs, _, terminated, truncated, _ = env.step(action)
-
-    if terminated or truncated:
-        obs = env.reset()[0]  # Reset environment if episode ends
-
+print(f"Evaluation complete. Results saved to {results_path}")
 env.close()
-
-# Compute variance of Q-values
-q_values_array = np.array(q_values_list)
-q_variance = np.var(q_values_array, axis=1)
-
-# Plot the Q-value variance over time
-plt.plot(q_variance)
-plt.xlabel("Time Step")
-plt.ylabel("Q-value Variance")
-plt.title("Bootstrapped DQN: Q-value Uncertainty Over Time")
-
-plt.savefig("results/q_value_variance.png")
-plt.show()
