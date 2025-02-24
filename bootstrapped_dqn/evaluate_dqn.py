@@ -2,24 +2,23 @@ import os
 import torch
 import gymnasium as gym
 import argparse
+import cv2
+import numpy as np
 from stable_baselines3 import DQN
 
 # Parse command-line arguments
 parser = argparse.ArgumentParser()
 parser.add_argument("--model_path", type=str, default="models/dqn_cartpole", help="Path to saved model")
-parser.add_argument("--num_episodes", type=int, default=10, help="Number of evaluation episodes")
+parser.add_argument("--num_episodes", type=int, default=5, help="Number of evaluation episodes")
 parser.add_argument("--device", type=str, default="auto", help="Choose device: auto, cpu, cuda")
+parser.add_argument("--save_video", type=str, default="cartpole.mp4", help="Path to save the evaluation video")
 args = parser.parse_args()
 
 # Automatically select device (GPU or CPU)
-if args.device == "auto":
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-else:
-    device = torch.device(args.device)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu") if args.device == "auto" else torch.device(args.device)
 
 # Load the trained model (use latest checkpoint if available)
 if not os.path.exists(args.model_path + ".zip"):
-    # Check for latest checkpoint
     checkpoints = [f for f in os.listdir(os.path.dirname(args.model_path)) if "checkpoint" in f and f.endswith(".zip")]
     if checkpoints:
         latest_checkpoint = sorted(checkpoints, key=lambda x: int(x.split("_")[-1].split(".")[0]))[-1]
@@ -31,19 +30,23 @@ if not os.path.exists(args.model_path + ".zip"):
 print(f"Loading model from: {args.model_path}")
 model = DQN.load(args.model_path, device=device)
 
-# Create environment
-env = gym.make("CartPole-v1")
+# Create environment with "rgb_array" mode for video saving
+env = gym.make("CartPole-v1", render_mode="rgb_array")
 
-# Evaluate model
+# Evaluate model and record video
 total_rewards = []
+frames = []
+
 for episode in range(args.num_episodes):
-    obs, _ = env.reset()
+    obs, info = env.reset()
     done = False
     episode_reward = 0
 
     while not done:
+        frame = env.render()
+        frames.append(frame)  # Save frame for video
         action, _ = model.predict(obs, deterministic=True)
-        obs, reward, terminated, truncated, _ = env.step(action)
+        obs, reward, terminated, truncated, info = env.step(action)
         episode_reward += reward
         done = terminated or truncated
 
@@ -56,4 +59,16 @@ with open(results_path, "a") as f:
     f.write(f"Model: {args.model_path}, Episodes: {args.num_episodes}, Avg Reward: {sum(total_rewards)/len(total_rewards):.2f}\n")
 
 print(f"Evaluation complete. Results saved to {results_path}")
+
+# Save video
+if frames:
+    height, width, _ = frames[0].shape
+    out = cv2.VideoWriter(args.save_video, cv2.VideoWriter_fourcc(*'mp4v'), 30, (width, height))
+
+    for frame in frames:
+        out.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))  # Convert RGB to BGR for OpenCV
+
+    out.release()
+    print(f"Video saved as {args.save_video}")
+
 env.close()

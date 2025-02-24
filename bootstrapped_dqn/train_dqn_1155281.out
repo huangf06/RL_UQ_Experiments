@@ -1,0 +1,19 @@
+Using cpu device
+Wrapping the env with a `Monitor` wrapper
+Wrapping the env in a DummyVecEnv.
+Training complete. Model saved.
+
+Evaluating the trained model...
+Wrapping the env with a `Monitor` wrapper
+Wrapping the env in a DummyVecEnv.
+Episode 1: Reward = 19.0
+Episode 2: Reward = 110.0
+Episode 3: Reward = 13.0
+Episode 4: Reward = 110.0
+Episode 5: Reward = 17.0
+Episode 6: Reward = 110.0
+Episode 7: Reward = 15.0
+Episode 8: Reward = 14.0
+Episode 9: Reward = 15.0
+Episode 10: Reward = 14.0
+Evaluation complete. Results saved to logs/evaluation_results.txt

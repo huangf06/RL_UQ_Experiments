@@ -1,0 +1,4 @@
+Model: models/dqn_cartpole, Episodes: 10, Avg Reward: 133.20
+Model: models/dqn_cartpole, Episodes: 10, Avg Reward: 500.00
+Model: models/dqn_cartpole_checkpoint_10.zip, Episodes: 5, Avg Reward: 500.00
+Model: models/dqn_cartpole, Episodes: 5, Avg Reward: 500.00
