@@ -1,128 +1,114 @@
-import gym
-import torch
-import random
+import gymnasium as gym
 import numpy as np
-import matplotlib.pyplot as plt
-import realworldrl_suite.environments as rwrl
-from collections import deque
-from torch import nn, optim
+import cv2
+import logging
+from stable_baselines3 import PPO, SAC
+from stable_baselines3.common.evaluation import evaluate_policy
 
-# ========================== 1️⃣ Set Up Environment ==========================
+# Configure logging
+log_file = "walker2d_training.log"
+logging.basicConfig(filename=log_file, level=logging.INFO, format="%(asctime)s - %(message)s")
 
-# Choose the environment (walker, cartpole, humanoid, etc.)
-ENV_NAME = "walker"
+### === 1. Train the Walker2d Agent === ###
+# Choose RL algorithm (PPO or SAC)
+USE_SAC = False  # Set to True to use SAC instead of PPO
 
-# Create environment with real-world factors enabled
-env = rwrl.create(
-    ENV_NAME,
-    realworld_kwargs={
-        "enable_all": True  # Enables all real-world challenges (sensor noise, delays, etc.)
-    },
-)
+# Create the environment
+env = gym.make("Walker2d-v5")
 
-state_size = env.observation_space.shape[0]
-action_size = env.action_space.shape[0]  # Continuous action space
+# Select the model
+if USE_SAC:
+    model = SAC("MlpPolicy", env, verbose=1)
+    model_name = "walker2d_sac"
+else:
+    model = PPO("MlpPolicy", env, verbose=1)
+    model_name = "walker2d_ppo"
 
-# ========================== 2️⃣ Define DQN Model ==========================
+# Train the model for a sufficient number of timesteps
+TOTAL_TIMESTEPS = 500_000  # Train for 500K steps to ensure the agent learns to walk
+model.learn(total_timesteps=TOTAL_TIMESTEPS)
 
-class DQN(nn.Module):
-    def __init__(self, state_size, action_size):
-        super(DQN, self).__init__()
-        self.fc1 = nn.Linear(state_size, 128)
-        self.fc2 = nn.Linear(128, 128)
-        self.fc3 = nn.Linear(128, action_size)
-    
-    def forward(self, x):
-        x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
-        return self.fc3(x)
+# Save the trained model
+model.save(model_name)
+logging.info(f"Training completed. Model saved as {model_name}.zip")
 
-# ========================== 3️⃣ Training Hyperparameters ==========================
+# Close the environment
+env.close()
 
-GAMMA = 0.99
-LEARNING_RATE = 0.0005
-BATCH_SIZE = 64
-MEMORY_SIZE = 10000
-EPSILON_DECAY = 0.995
-MIN_EPSILON = 0.01
-TARGET_UPDATE = 10
-EPISODES = 500
-MAX_STEPS = 1000
 
-# Initialize DQN Model
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-policy_net = DQN(state_size, action_size).to(device)
-target_net = DQN(state_size, action_size).to(device)
-target_net.load_state_dict(policy_net.state_dict())
+### === 2. Evaluate the Walker2d Agent === ###
+# Load the trained model
+model = PPO.load(model_name) if not USE_SAC else SAC.load(model_name)
 
-# Experience replay
-memory = deque(maxlen=MEMORY_SIZE)
+# Create evaluation environment
+env = gym.make("Walker2d-v5")
 
-def select_action(state, epsilon):
-    if random.random() < epsilon:
-        return env.action_space.sample()  # Random action
-    else:
-        with torch.no_grad():
-            state = torch.FloatTensor(state).to(device)
-            return policy_net(state).cpu().numpy()  # Continuous action
+# Evaluate over multiple episodes
+n_episodes = 10
+episode_rewards = []
+episode_lengths = []
 
-# ========================== 4️⃣ Training Loop ==========================
-
-optimizer = optim.Adam(policy_net.parameters(), lr=LEARNING_RATE)
-loss_fn = nn.MSELoss()
-epsilon = 1.0
-reward_list = []
-
-for episode in range(EPISODES):
-    state = env.reset()
+for _ in range(n_episodes):
+    obs, _ = env.reset()
+    done = False
     total_reward = 0
-    for step in range(MAX_STEPS):
-        action = select_action(state, epsilon)
-        next_state, reward, done, _ = env.step(action)
-        memory.append((state, action, reward, next_state, done))
-        state = next_state
+    steps = 0
+
+    while not done:
+        action, _ = model.predict(obs, deterministic=True)
+        obs, reward, done, _, _ = env.step(action)
         total_reward += reward
+        steps += 1
 
-        if done:
-            break
+    episode_rewards.append(total_reward)
+    episode_lengths.append(steps)
 
-        # Train DQN using experience replay
-        if len(memory) > BATCH_SIZE:
-            batch = random.sample(memory, BATCH_SIZE)
-            states, actions, rewards, next_states, dones = zip(*batch)
+# Compute evaluation statistics
+mean_reward = np.mean(episode_rewards)
+std_reward = np.std(episode_rewards)
+mean_length = np.mean(episode_lengths)
 
-            states = torch.FloatTensor(states).to(device)
-            actions = torch.FloatTensor(actions).to(device)  # Continuous actions
-            rewards = torch.FloatTensor(rewards).unsqueeze(1).to(device)
-            next_states = torch.FloatTensor(next_states).to(device)
-            dones = torch.FloatTensor(dones).unsqueeze(1).to(device)
+logging.info(f"Evaluation Results (over {n_episodes} episodes):")
+logging.info(f"Mean Reward: {mean_reward:.2f} ± {std_reward:.2f}")
+logging.info(f"Mean Episode Length: {mean_length:.2f} steps")
+logging.info(f"Max Episode Reward: {np.max(episode_rewards):.2f}")
+logging.info(f"Min Episode Reward: {np.min(episode_rewards):.2f}")
 
-            q_values = policy_net(states)
-            next_q_values = target_net(next_states).max(1, keepdim=True)[0]
-            target_q_values = rewards + GAMMA * next_q_values * (1 - dones)
+# Close the evaluation environment
+env.close()
 
-            loss = loss_fn(q_values, target_q_values.detach())
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
 
-    # Update target network
-    if episode % TARGET_UPDATE == 0:
-        target_net.load_state_dict(policy_net.state_dict())
+### === 3. Record Walker2d Performance Video === ###
+# Create a new environment for rendering
+env = gym.make("Walker2d-v5", render_mode="rgb_array")
 
-    # Save episode reward
-    reward_list.append(total_reward)
-    epsilon = max(MIN_EPSILON, epsilon * EPSILON_DECAY)
+# Record frames for the video
+video_frames = []
+obs, _ = env.reset()
+done = False
 
-    print(f"Episode {episode}, Reward: {total_reward}")
+while not done:
+    action, _ = model.predict(obs, deterministic=True)
+    obs, reward, done, _, _ = env.step(action)
 
-# Save trained model
-torch.save(policy_net.state_dict(), "../models/walker_dqn.pth")
+    # Capture the current frame
+    frame = env.render()
+    video_frames.append(frame)
 
-# Save training reward plot
-plt.plot(reward_list)
-plt.xlabel("Episodes")
-plt.ylabel("Reward")
-plt.title("Walker - Training Reward")
-plt.savefig("../results/walker_training_reward.png")
-plt.close()
+# Close the environment
+env.close()
+
+# Save the video in the current directory
+video_path = "walker2d_run.mp4"
+
+# Write video frames to an MP4 file
+height, width, _ = video_frames[0].shape
+fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+out = cv2.VideoWriter(video_path, fourcc, 30, (width, height))
+
+for frame in video_frames:
+    out.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+
+out.release()
+
+logging.info(f"Walker2d performance video recorded. Saved as {video_path}")
